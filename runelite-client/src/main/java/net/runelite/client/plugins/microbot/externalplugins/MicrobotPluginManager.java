@@ -317,6 +317,8 @@ public class MicrobotPluginManager {
                     plugins.add(clazz);
                 } catch (ClassNotFoundException e) {
                     log.trace("Class not found during sideloading: {}", classInfo.getName(), e);
+                } catch(Throwable t) {
+                    log.error("Incompatible plugin found: " + internalName);
                 }
             }
             loadPlugins(plugins, null);
@@ -832,6 +834,8 @@ public class MicrobotPluginManager {
                             pluginClasses.add(clazz);
                         } catch (ClassNotFoundException e) {
                             log.trace("Class not found during plugin loading: {}", classInfo.getName(), e);
+                        } catch(Throwable t) {
+                            log.error("Incompatible plugin found: " + pluginName);
                         }
                     }
 
