@@ -37,7 +37,9 @@ import javax.imageio.ImageIO;
 import javax.inject.Inject;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
+import java.io.File;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.util.List;
 import java.util.Map;
 
@@ -46,6 +48,7 @@ public class MicrobotPluginClient
 {
     private static final HttpUrl MICROBOT_PLUGIN_HUB_URL = HttpUrl.parse("https://chsami.github.io/Microbot-Hub/");
     private static final String PLUGINS_JSON_PATH = "plugins.json";
+    private static final String LOCAL_PLUGIN_FOLDER = System.getProperty("microbot.local.plugins");
     
     private final OkHttpClient okHttpClient;
     private final Gson gson;
@@ -58,10 +61,17 @@ public class MicrobotPluginClient
     }
 
     /**
-     * Downloads the plugin manifest from the Microbot Hub
+     * Downloads the plugin manifest from the Microbot Hub or loads from local folder
      */
     public List<MicrobotPluginManifest> downloadManifest() throws IOException
     {
+        // Check if we should load from local folder
+        if (LOCAL_PLUGIN_FOLDER != null && !LOCAL_PLUGIN_FOLDER.trim().isEmpty())
+        {
+            log.info("Loading plugins from local folder: {}", LOCAL_PLUGIN_FOLDER);
+            return loadLocalManifest();
+        }
+
         HttpUrl manifestUrl = MICROBOT_PLUGIN_HUB_URL.newBuilder()
             .addPathSegment(PLUGINS_JSON_PATH)
             .build();
@@ -88,10 +98,46 @@ public class MicrobotPluginClient
     }
 
     /**
-     * Downloads plugin icon from the Microbot Hub
+     * Loads plugin manifest from local folder
+     */
+    private List<MicrobotPluginManifest> loadLocalManifest() throws IOException
+    {
+        File manifestFile = new File(LOCAL_PLUGIN_FOLDER, PLUGINS_JSON_PATH);
+        log.info("Looking for local manifest at: {}", manifestFile.getAbsolutePath());
+        
+        if (!manifestFile.exists())
+        {
+            throw new IOException("Local manifest file not found: " + manifestFile.getAbsolutePath());
+        }
+
+        try
+        {
+            String manifestContent = Files.readString(manifestFile.toPath());
+            List<MicrobotPluginManifest> manifests = gson.fromJson(manifestContent, new TypeToken<List<MicrobotPluginManifest>>(){}.getType());
+            log.info("Successfully loaded {} plugin manifests from local folder", manifests.size());
+            return manifests;
+        }
+        catch (JsonSyntaxException ex)
+        {
+            throw new IOException("Failed to parse local plugin manifest", ex);
+        }
+    }
+
+    /**
+     * Downloads plugin icon from the Microbot Hub or loads from local folder
      */
     public BufferedImage downloadIcon(String iconUrl) throws IOException
     {
+        // If using local plugins, try to load icon from local folder first
+        if (LOCAL_PLUGIN_FOLDER != null && !LOCAL_PLUGIN_FOLDER.trim().isEmpty())
+        {
+            BufferedImage localIcon = loadLocalIcon(iconUrl);
+            if (localIcon != null)
+            {
+                return localIcon;
+            }
+        }
+
         HttpUrl url = HttpUrl.parse(iconUrl);
         if (url == null)
         {
@@ -110,11 +156,86 @@ public class MicrobotPluginClient
     }
 
     /**
+     * Loads plugin icon from local folder
+     */
+    private BufferedImage loadLocalIcon(String iconUrl) throws IOException
+    {
+        try
+        {
+            // Extract filename from URL
+            String filename = iconUrl.substring(iconUrl.lastIndexOf('/') + 1);
+            File iconFile = new File(LOCAL_PLUGIN_FOLDER, "icons/" + filename);
+            
+            if (!iconFile.exists())
+            {
+                // Try without icons subfolder
+                iconFile = new File(LOCAL_PLUGIN_FOLDER, filename);
+            }
+            
+            if (iconFile.exists())
+            {
+                synchronized (ImageIO.class)
+                {
+                    return ImageIO.read(iconFile);
+                }
+            }
+        }
+        catch (Exception e)
+        {
+            log.debug("Failed to load local icon: {}", iconUrl, e);
+        }
+        
+        return null;
+    }
+
+    /**
      * Returns the URL for downloading a plugin JAR
      */
     public HttpUrl getJarURL(MicrobotPluginManifest manifest)
     {
-        return HttpUrl.parse(manifest.getUrl());
+        String manifestUrl = manifest.getUrl();
+        
+        // Check if manifest URL is already a local file path (not an HTTP URL)
+        if (manifestUrl != null && !manifestUrl.startsWith("http"))
+        {
+            File jarFile = new File(manifestUrl);
+            log.info("Manifest URL is local path for plugin {}: {} (exists: {})", 
+                manifest.getInternalName(), jarFile.getAbsolutePath(), jarFile.exists());
+            
+            if (jarFile.exists())
+            {
+                String fileUri = jarFile.toURI().toString();
+                HttpUrl httpUrl = HttpUrl.parse(fileUri);
+                log.info("Using local JAR from manifest - URI: {}", fileUri);
+                return httpUrl;
+            }
+            else
+            {
+                log.error("Local JAR specified in manifest not found for plugin {}: {}", 
+                    manifest.getInternalName(), jarFile.getAbsolutePath());
+                return null;
+            }
+        }
+        
+        // If using local plugins folder, try to find JAR there by internalName
+        if (LOCAL_PLUGIN_FOLDER != null && !LOCAL_PLUGIN_FOLDER.trim().isEmpty())
+        {
+            File jarFile = new File(LOCAL_PLUGIN_FOLDER, manifest.getInternalName() + ".jar");
+            log.info("Checking for local JAR by name: {} (exists: {})", jarFile.getAbsolutePath(), jarFile.exists());
+            
+            if (jarFile.exists())
+            {
+                String fileUri = jarFile.toURI().toString();
+                HttpUrl httpUrl = HttpUrl.parse(fileUri);
+                log.info("Local JAR found in folder - URI: {}", fileUri);
+                return httpUrl;
+            }
+        }
+        
+        // Fall back to remote URL from manifest
+        HttpUrl httpUrl = HttpUrl.parse(manifestUrl);
+        log.info("Using remote manifest URL for plugin {}: {}", manifest.getInternalName(), manifestUrl);
+        return httpUrl;
     }
 
     /**
