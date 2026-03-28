@@ -1,8 +1,5 @@
 #!/bin/bash
 
-export JAVA_HOME=/usr/local/opt/openjdk@11/libexec/openjdk.jdk/Contents/Home
-export PATH="/usr/local/opt/openjdk@11/bin:$PATH"
-
 set -e  # Exit on any error
 
 # Colors for output
@@ -164,8 +161,14 @@ verify_java() {
     fi
 
     local java_version
-    java_version=$(java -version 2>&1 | head -n1 | cut -d'"' -f2 | cut -d'.' -f1)
-    if [ "$java_version" -lt 11 ] 2>/dev/null; then
+    java_version=$(java -version 2>&1 | head -n1 | cut -d'"' -f2)
+    # Handle both old-style (1.8.x) and new-style (11.x, 17.x) version formats
+    local major_version
+    major_version=$(echo "$java_version" | cut -d'.' -f1)
+    if [ "$major_version" = "1" ]; then
+        major_version=$(echo "$java_version" | cut -d'.' -f2)
+    fi
+    if [ "$major_version" -lt 11 ] 2>/dev/null; then
         print_error "Java 11+ is required. Found version: $java_version"
         exit 1
     fi

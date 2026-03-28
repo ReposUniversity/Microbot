@@ -50,13 +50,19 @@ install_java() {
 
     if command_exists java; then
         local java_version
-        java_version=$(java -version 2>&1 | head -n1 | cut -d'"' -f2 | cut -d'.' -f1)
-        if [ "$java_version" -ge 11 ] 2>/dev/null; then
-            print_status "Java $java_version is already installed."
+        java_version=$(java -version 2>&1 | head -n1 | cut -d'"' -f2)
+        # Handle both old-style (1.8.x) and new-style (11.x, 17.x) version formats
+        local major_version
+        major_version=$(echo "$java_version" | cut -d'.' -f1)
+        if [ "$major_version" = "1" ]; then
+            major_version=$(echo "$java_version" | cut -d'.' -f2)
+        fi
+        if [ "$major_version" -ge 11 ] 2>/dev/null; then
+            print_status "Java $major_version is already installed."
             java -version 2>&1 | head -n3
             return 0
         else
-            print_warning "Java $java_version found but Java 11+ is required."
+            print_warning "Java $major_version found but Java 11+ is required."
         fi
     fi
 
@@ -223,10 +229,7 @@ run_initial_build() {
 
     print_status "Initial compilation successful!"
     print_status ""
-    print_status "To build the full shaded JAR, run:"
-    print_status "  ./_main.sh --build"
-    print_status ""
-    print_status "To build and run the client, run:"
+    print_status "To build and run the client:"
     print_status "  ./_main.sh --build"
 }
 
