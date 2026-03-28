@@ -586,7 +586,21 @@ public class MicrobotPluginHubPanel extends MicrobotPluginPanel {
     private final JPanel mainPanel;
     private List<PluginItem> plugins = null;
 
-    private static final File MICROBOT_PLUGIN_DIR = new File(RuneLite.RUNELITE_DIR, "microbot-plugins");
+    private static File getPluginDirectory() {
+        String customPath = System.getenv("MICROBOT_LOCAL_PLUGINS_PATH");
+        if (customPath != null && !customPath.isEmpty()) {
+            File customDir = new File(customPath);
+            if (customDir.exists() && customDir.isDirectory()) {
+                log.info("Using custom plugin directory: {}", customDir.getAbsolutePath());
+                return customDir;
+            } else {
+                log.warn("Custom plugin directory does not exist or is not a directory: {}", customPath);
+            }
+        }
+        return new File(RuneLite.RUNELITE_DIR, "microbot-plugins");
+    }
+
+    private static final File MICROBOT_PLUGIN_DIR = getPluginDirectory();
 
     @Inject
     MicrobotPluginHubPanel(

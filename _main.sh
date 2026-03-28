@@ -28,6 +28,8 @@ show_usage() {
     echo "  --build                   Build the project before starting (default: false)"
     echo "  --stop                    Stop running RuneLite instances and exit"
     echo "  --profile <name>          Use a specific profile (default: default)"
+    echo "  --credentials <path>      Path to Jagex credentials file (default: ~/.runelite/credentials.properties)"
+    echo "  --local-plugins <path>    Path to local plugins directory"
     echo "  --debug                   Enable remote debugging on port 5005"
     echo "  --clean                   Clean build artifacts before building"
     echo "  --skip-run                Build only, do not run the client"
@@ -40,6 +42,8 @@ show_usage() {
     echo "  $0 --build --skip-run     Build only without running"
     echo "  $0 --stop                 Stop all running instances"
     echo "  $0 --profile myprofile    Run with a custom profile"
+    echo "  $0 --credentials /path/to/creds.properties  Use custom credentials file"
+    echo "  $0 --local-plugins /path/to/plugins  Use local plugins directory"
     echo "  $0 --debug                Run with remote debugging enabled"
 }
 
@@ -47,6 +51,8 @@ show_usage() {
 BUILD=false
 STOP=false
 PROFILE="default"
+CREDENTIALS_PATH="${HOME}/.runelite/credentials.properties"
+LOCAL_PLUGINS_PATH=""
 DEBUG=false
 CLEAN=false
 SKIP_RUN=false
@@ -64,6 +70,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         --profile)
             PROFILE="$2"
+            shift 2
+            ;;
+        --credentials)
+            CREDENTIALS_PATH="$2"
+            shift 2
+            ;;
+        --local-plugins)
+            LOCAL_PLUGINS_PATH="$2"
             shift 2
             ;;
         --debug)
@@ -97,6 +111,26 @@ if [ -f ".env" ]; then
     # shellcheck source=/dev/null
     source .env
     set +a
+fi
+
+# Load Jagex Launcher credentials if available
+RUNELITE_CREDENTIALS="$CREDENTIALS_PATH"
+if [ -f "$RUNELITE_CREDENTIALS" ]; then
+    print_status "Loading Jagex Launcher credentials from $RUNELITE_CREDENTIALS"
+    # Export credentials as environment variables
+    export JX_CHARACTER_ID=$(grep '^JX_CHARACTER_ID=' "$RUNELITE_CREDENTIALS" | cut -d'=' -f2)
+    export JX_SESSION_ID=$(grep '^JX_SESSION_ID=' "$RUNELITE_CREDENTIALS" | cut -d'=' -f2)
+    export JX_DISPLAY_NAME=$(grep '^JX_DISPLAY_NAME=' "$RUNELITE_CREDENTIALS" | cut -d'=' -f2)
+    export JX_REFRESH_TOKEN=$(grep '^JX_REFRESH_TOKEN=' "$RUNELITE_CREDENTIALS" | cut -d'=' -f2)
+    export JX_ACCESS_TOKEN=$(grep '^JX_ACCESS_TOKEN=' "$RUNELITE_CREDENTIALS" | cut -d'=' -f2)
+    
+    if [ -n "$JX_CHARACTER_ID" ] && [ -n "$JX_SESSION_ID" ]; then
+        print_status "Jagex account loaded: $JX_DISPLAY_NAME (Character ID: $JX_CHARACTER_ID)"
+    fi
+else
+    if [ "$CREDENTIALS_PATH" != "${HOME}/.runelite/credentials.properties" ]; then
+        print_warning "Credentials file not found at: $RUNELITE_CREDENTIALS"
+    fi
 fi
 
 # Project configuration
@@ -229,18 +263,45 @@ run_client() {
 
     # Build JVM arguments
     local jvm_args=()
-    jvm_args+=("-jar" "$jar_to_run")
-
+    
+    # Add macOS-specific exports for Java 11+ module system
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        jvm_args+=("--add-exports" "java.desktop/com.apple.eawt=ALL-UNNAMED")
+    fi
+    
     if [ "$DEBUG" = true ]; then
         print_status "Debug mode enabled on port 5005"
-        jvm_args=("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=*:5005" "${jvm_args[@]}")
+        jvm_args+=("-agentlib:jdwp=transport=dt_socket,server=y,suspend=y,address=*:5005")
     fi
+    
+    # Add Jagex Launcher credentials as system properties if available
+    if [ -n "$JX_SESSION_ID" ]; then
+        jvm_args+=("-Djagex.launcher=true")
+        jvm_args+=("-Djagexlauncher.session=$JX_SESSION_ID")
+        jvm_args+=("-Djagexlauncher.characterid=$JX_CHARACTER_ID")
+        [ -n "$JX_DISPLAY_NAME" ] && jvm_args+=("-Djagexlauncher.displayname=$JX_DISPLAY_NAME")
+        [ -n "$JX_REFRESH_TOKEN" ] && jvm_args+=("-Djagexlauncher.refreshtoken=$JX_REFRESH_TOKEN")
+        [ -n "$JX_ACCESS_TOKEN" ] && jvm_args+=("-Djagexlauncher.accesstoken=$JX_ACCESS_TOKEN")
+        print_status "Using Jagex Launcher authentication"
+    fi
+    
+    jvm_args+=("-jar" "$jar_to_run")
 
     # Add profile argument if not default
     local app_args=()
     if [ "$PROFILE" != "default" ]; then
         print_status "Using profile: $PROFILE"
         app_args+=("--profile" "$PROFILE")
+    fi
+    
+    # Add local plugins path as environment variable if specified
+    if [ -n "$LOCAL_PLUGINS_PATH" ]; then
+        if [ -d "$LOCAL_PLUGINS_PATH" ]; then
+            print_status "Using local plugins from: $LOCAL_PLUGINS_PATH"
+            export MICROBOT_LOCAL_PLUGINS_PATH="$LOCAL_PLUGINS_PATH"
+        else
+            print_warning "Local plugins directory not found: $LOCAL_PLUGINS_PATH"
+        fi
     fi
 
     print_status "Starting Microbot client..."

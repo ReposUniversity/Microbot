@@ -41,7 +41,12 @@ import javax.imageio.ImageIO;
 import javax.inject.Inject;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
+import java.io.File;
+import java.io.FileReader;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.LinkedHashSet;
@@ -61,6 +66,7 @@ public class MicrobotPluginClient
         "https://api.github.com/repos/chsami/Microbot-Hub/releases"
     );
     private static final String GITHUB_TOKEN_ENV = "GITHUB_TOKEN";
+    private static final String LOCAL_PLUGINS_PATH_ENV = "MICROBOT_LOCAL_PLUGINS_PATH";
     private static final String ASSET_EXTENSION = ".jar";
     private static final String PLUGINS_JSON_PATH = "plugins.json";
     
@@ -75,10 +81,18 @@ public class MicrobotPluginClient
     }
 
     /**
-     * Downloads the plugin manifest from the Microbot Hub
+     * Downloads the plugin manifest from the Microbot Hub or loads from local path
      */
     public List<MicrobotPluginManifest> downloadManifest() throws IOException
     {
+        // Check for local plugins path environment variable
+        String localPluginsPath = System.getenv(LOCAL_PLUGINS_PATH_ENV);
+        if (!Strings.isNullOrEmpty(localPluginsPath))
+        {
+            return loadManifestFromLocal(localPluginsPath);
+        }
+
+        // Default: download from remote
         HttpUrl manifestUrl = MICROBOT_PLUGIN_HUB_URL.newBuilder()
             .addPathSegment(PLUGINS_JSON_PATH)
             .build();
@@ -101,6 +115,55 @@ public class MicrobotPluginClient
         catch (JsonSyntaxException ex)
         {
             throw new IOException("Failed to parse plugin manifest", ex);
+        }
+    }
+
+    /**
+     * Loads plugin manifest from a local directory
+     */
+    private List<MicrobotPluginManifest> loadManifestFromLocal(String localPath) throws IOException
+    {
+        Path pluginsJsonPath = Paths.get(localPath, PLUGINS_JSON_PATH);
+        File pluginsJsonFile = pluginsJsonPath.toFile();
+
+        if (!pluginsJsonFile.exists())
+        {
+            log.warn("Local plugins.json not found at: {}", pluginsJsonPath);
+            throw new IOException("plugins.json not found in local path: " + localPath);
+        }
+
+        log.info("Loading plugins from local path: {}", localPath);
+
+        try (FileReader reader = new FileReader(pluginsJsonFile))
+        {
+            List<MicrobotPluginManifest> manifests = gson.fromJson(reader, 
+                new TypeToken<List<MicrobotPluginManifest>>(){}.getType());
+
+            // Update download URLs to point to local files
+            for (MicrobotPluginManifest manifest : manifests)
+            {
+                String artifactId = resolveArtifactId(manifest);
+                String version = manifest.getVersion();
+                String fileName = buildAssetFileName(artifactId, version);
+                Path jarPath = Paths.get(localPath, fileName);
+
+                if (jarPath.toFile().exists())
+                {
+                    // Set local file URL
+                    manifest.setDownloadUrl("file://" + jarPath.toAbsolutePath().toString());
+                    log.debug("Local plugin found: {} -> {}", manifest.getInternalName(), jarPath);
+                }
+                else
+                {
+                    log.warn("Local JAR not found for {}: {}", manifest.getInternalName(), jarPath);
+                }
+            }
+
+            return manifests;
+        }
+        catch (JsonSyntaxException ex)
+        {
+            throw new IOException("Failed to parse local plugin manifest", ex);
         }
     }
 
