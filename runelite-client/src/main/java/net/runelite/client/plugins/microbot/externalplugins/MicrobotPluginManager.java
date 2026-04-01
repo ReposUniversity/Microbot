@@ -934,6 +934,27 @@ public class MicrobotPluginManager {
 
         try {
             File pluginFile = getPluginJarFile(internalName);
+            String url = manifest.getUrl();
+            
+            // Check if URL is a local file path
+            if (url.startsWith("/") || url.startsWith("\\") || url.matches("^[A-Za-z]:.*")) {
+                File sourceFile = new File(url);
+                if (!sourceFile.exists()) {
+                    log.error("Local JAR not found for plugin {}: {}", internalName, url);
+                    return false;
+                }
+                
+                // Copy local file to plugin directory
+                Files.copy(sourceFile, pluginFile);
+                log.info("Plugin {} copied from local file to {}", internalName, pluginFile.getAbsolutePath());
+                
+                String authoritativeHash = manifest.getSha256();
+                if (!Strings.isNullOrEmpty(authoritativeHash)) {
+                    rememberInstalledPluginVersion(internalName, manifest.getVersion(), authoritativeHash);
+                }
+                
+                return true;
+            }
 
             String versionToDownload = !Strings.isNullOrEmpty(versionOverride) ? versionOverride : manifest.getVersion();
             if (Strings.isNullOrEmpty(versionToDownload)) {
@@ -943,7 +964,7 @@ public class MicrobotPluginManager {
 
             HttpUrl jarUrl = microbotPluginClient.getJarURL(manifest, versionToDownload);
             if (jarUrl == null || !jarUrl.isHttps()) {
-                log.error("Invalid JAR URL for plugin {}", internalName);
+                log.error("Invalid JAR URL for plugin {}: {}", internalName, url);
                 return false;
             }
 
